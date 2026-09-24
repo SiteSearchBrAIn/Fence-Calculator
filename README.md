@@ -2,7 +2,7 @@
 
 Custom fence pricing calculator plugin for **newtampafence.com**.
 
-- **Version:** 3.1.1
+- **Version:** 3.2.0
 - **WordPress plugin slug:** `ntf-fence-estimator`
 
 ## Provenance
@@ -43,6 +43,30 @@ assets/calculator.css     styles
 assets/calculator.js      step logic and quote calculation
 assets/logo.png
 ```
+
+## Updates (3.2.0)
+
+The plugin updates itself from this repository's GitHub releases. There is no store and no license.
+
+- WordPress checks the latest release (cached 6 hours) and offers it under Dashboard > Updates and
+  on the Plugins screen, like any plugin. Install with one click, `wp plugin update ntf-fence-estimator`,
+  or switch on the per-plugin "Enable auto-updates" link.
+- Dashboard > Updates > **Check again** (and WP-CLI) forces a fresh look.
+- The installer renames GitHub's download folder to `ntf-fence-estimator/` and refuses a package that
+  does not contain the plugin file, so an update can never leave a second copy or deactivate the plugin.
+- Private repo instead of public: define `NTF_FENCE_GH_TOKEN` in `wp-config.php` with a read-only token
+  (Contents: Read on this repo). It is only sent to api.github.com.
+
+### Releasing
+
+1. Change the code on a branch, test on `staging12`, merge the PR to `main`.
+2. Make sure `Version:` in `ntf-fence-estimator.php` and `NTF_FENCE_VERSION` both equal the new version.
+3. `gh release create vX.Y.Z --target main --title "X.Y.Z - summary" --notes "what changed"`.
+   The release notes become the changelog shown in WordPress. No zip needs attaching.
+4. Sites see it within 6 hours, or immediately after "Check again".
+
+Version 3.2.0 is the first release with the updater, so a site on 3.1.x has to be updated by hand once
+(copy the folder). Every release after that installs itself.
 
 ## Deploying
 
