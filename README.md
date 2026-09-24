@@ -2,7 +2,7 @@
 
 Custom fence pricing calculator plugin for **newtampafence.com**.
 
-- **Version:** 3.2.0
+- **Version:** 3.2.1
 - **WordPress plugin slug:** `ntf-fence-estimator`
 
 ## Provenance

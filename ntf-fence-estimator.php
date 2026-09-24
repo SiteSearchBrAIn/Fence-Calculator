@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Privacy Fence Estimator (New Tampa Fence)
  * Description: Adds a [ntf_fence_estimator] shortcode with a lead-gated fence-cost calculator. All pricing and content is edited in the WordPress dashboard under Fence Estimator; submitted leads and quote requests are stored and emailed.
- * Version: 3.2.0
+ * Version: 3.2.1
  * Author: Steve Scott SEO
  */
 
 if (!defined('ABSPATH')) { exit; }
 
-define('NTF_FENCE_VERSION', '3.2.0');
+define('NTF_FENCE_VERSION', '3.2.1');
 define('NTF_FENCE_OPTION', 'ntf_fence_rates_v3');
 // Where estimator leads go when no notify address is saved. Never the WP admin email (that is the agency).
 define('NTF_FENCE_FALLBACK_EMAIL', 'newtampafence@gmail.com');
