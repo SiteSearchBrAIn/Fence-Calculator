@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Privacy Fence Estimator (New Tampa Fence)
  * Description: Adds a [ntf_fence_estimator] shortcode with a lead-gated fence-cost calculator. All pricing and content is edited in the WordPress dashboard under Fence Estimator; submitted leads and quote requests are stored and emailed.
- * Version: 3.0.1
+ * Version: 3.1.0
  * Author: Steve Scott SEO
  */
 
 if (!defined('ABSPATH')) { exit; }
 
-define('NTF_FENCE_VERSION', '3.0.1');
+define('NTF_FENCE_VERSION', '3.1.0');
 define('NTF_FENCE_OPTION', 'ntf_fence_rates_v3');
 define('NTF_FENCE_HEIGHTS', array('4', '5', '6', '8'));
 
@@ -186,7 +186,90 @@ function ntf_fence_save_lead(WP_REST_Request $request) {
         wp_mail($notify, $subject, $body);
     }
 
+    // Queue the JobNimbus push. Runs from WP-Cron so the visitor never waits on the CRM API
+    // and a JobNimbus outage can never break the estimate or the notification email.
+    wp_schedule_single_event(time(), 'ntf_fence_jobnimbus_push', array(array(
+        'stage' => $stage, 'name' => $name, 'email' => $email, 'phone' => $phone, 'type' => $type,
+        'height' => $height, 'feet' => $feet, 'gates' => $gates, 'low' => $estLow, 'high' => $estHigh,
+    )));
+    if (function_exists('spawn_cron')) { spawn_cron(); }
+
     return rest_ensure_response(array('ok' => true));
+}
+
+/** ---------- JobNimbus push (uses the job-nimbus-client plugin, same API token as the Gravity Forms hook) ---------- */
+add_action('ntf_fence_jobnimbus_push', 'ntf_fence_jobnimbus_push');
+
+function ntf_fence_jn_log($msg) {
+    $log = get_option('ntf_fence_jn_log', array());
+    if (!is_array($log)) { $log = array(); }
+    $log[] = current_time('mysql') . ' ' . $msg;
+    update_option('ntf_fence_jn_log', array_slice($log, -50), false);
+}
+
+function ntf_fence_jobnimbus_push($lead) {
+    if (!function_exists('jnc_jobnimbus_client')) { ntf_fence_jn_log('SKIP job-nimbus-client plugin not active'); return; }
+    $email = isset($lead['email']) ? $lead['email'] : '';
+    $name  = isset($lead['name']) ? trim($lead['name']) : '';
+    $stage = (isset($lead['stage']) && $lead['stage'] === 'quote') ? 'quote' : 'lead';
+    $parts = preg_split('/\s+/', $name, 2);
+    $first = $parts[0];
+    $last  = isset($parts[1]) ? $parts[1] : '';
+
+    $desc = ($stage === 'quote' ? "Fence estimator: visitor completed the estimate and requested a quote.\n\n"
+                                : "Fence estimator: visitor started the estimator and requested their estimate.\n\n");
+    $desc .= 'Interested in: ' . $lead['type'] . "\n";
+    if ($lead['height'] !== '') { $desc .= 'Height: ' . $lead['height'] . " ft\n"; }
+    if ($lead['feet'] !== '')   { $desc .= 'Length: ' . $lead['feet'] . " ft\n"; }
+    if ($lead['gates'] !== '')  { $desc .= 'Gates: ' . $lead['gates'] . "\n"; }
+    if ($lead['low'] !== '' && $lead['high'] !== '') { $desc .= 'Estimated range: $' . $lead['low'] . ' - $' . $lead['high'] . "\n"; }
+    $desc .= 'Phone: ' . $lead['phone'] . "\nEmail: " . $email;
+
+    $contact_payload = array('type' => 'contact', 'name' => $name, 'first_name' => $first, 'email' => $email, 'mobile_phone' => $lead['phone']);
+    if ($last !== '') { $contact_payload['last_name'] = $last; }
+    $job_name = ($stage === 'quote' ? 'Fence Estimate Quote - ' : 'Fence Estimator Lead - ') . $name;
+    $job_payload = array(
+        'type' => 'job', 'name' => $job_name, 'description' => $desc,
+        'state_text' => defined('JNGI_DEFAULT_STATE_TEXT') ? JNGI_DEFAULT_STATE_TEXT : 'FL',
+        'source_name' => 'Web Search',
+    );
+
+    // Dry run for testing: log what would be sent, touch nothing.
+    if (apply_filters('ntf_fence_jobnimbus_dry_run', false)) {
+        ntf_fence_jn_log('DRY-RUN ' . $stage . ' contact=' . wp_json_encode($contact_payload) . ' job=' . wp_json_encode($job_payload));
+        return;
+    }
+
+    $client = jnc_jobnimbus_client();
+    $key    = 'ntf_jn_job_' . md5(strtolower($email));
+
+    // Completing the estimate updates the job the gate step already created instead of adding a second one.
+    if ($stage === 'quote') {
+        $prev = get_transient($key);
+        if ($prev) {
+            $upd = $client->request('PUT', 'jobs/' . rawurlencode($prev), array('body' => array('name' => $job_name, 'description' => $desc)));
+            if (!is_wp_error($upd)) { ntf_fence_jn_log('OK quote updated job ' . $prev . ' for ' . $email); return; }
+            ntf_fence_jn_log('WARN job update failed (' . $upd->get_error_message() . '), creating a new job');
+        }
+    }
+
+    $contact = $client->find_contact_by_email($email);
+    if (is_wp_error($contact)) { ntf_fence_jn_log('WARN contact search failed: ' . $contact->get_error_message()); $contact = null; }
+    if (!is_array($contact) || empty($contact['jnid'])) {
+        $contact = $client->create_contact($contact_payload);
+        if (is_wp_error($contact) || !is_array($contact) || empty($contact['jnid'])) {
+            ntf_fence_jn_log('FAIL contact create for ' . $email . ': ' . (is_wp_error($contact) ? $contact->get_error_message() : 'unexpected response'));
+            return;
+        }
+    }
+    $job_payload['primary'] = array('id' => $contact['jnid'], 'type' => 'contact', 'name' => $name);
+    $job = $client->create_job($job_payload);
+    if (is_wp_error($job) || !is_array($job) || empty($job['jnid'])) {
+        ntf_fence_jn_log('FAIL job create for ' . $email . ': ' . (is_wp_error($job) ? $job->get_error_message() : 'unexpected response'));
+        return;
+    }
+    set_transient($key, $job['jnid'], 14 * DAY_IN_SECONDS);
+    ntf_fence_jn_log('OK ' . $stage . ' contact ' . $contact['jnid'] . ' job ' . $job['jnid'] . ' for ' . $email);
 }
 
 /** ---------- Admin menu: Fence Estimator > Pricing, Leads ---------- */
